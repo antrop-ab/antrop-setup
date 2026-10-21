@@ -340,17 +340,40 @@ fi
 
 # Claude-plugins (valfritt) ----------------------------------------------------
 
+# Hittar ett claude-kommando som svarar. Claude Code finns på flera ställen beroende på hur det
+# installerats, och Claude-appens egen kopia har flyttat mellan versioner. Därför provas varje
+# kandidat med --version i stället för att lita på en enda sökväg. CLAUDE_BIN går före allt.
+find_claude() {
+  local app_data="$HOME/Library/Application Support/Claude"
+  local candidates=() c
+  [ -n "${CLAUDE_BIN:-}" ] && candidates+=("$CLAUDE_BIN")
+  c="$(command -v claude 2>/dev/null || true)"
+  [ -n "$c" ] && candidates+=("$c")
+  candidates+=("$HOME/.local/bin/claude" "$HOME/.claude/local/claude" "/opt/homebrew/bin/claude" "/usr/local/bin/claude")
+  # Claude-appens kopia, nyaste versionen först. Sökningen täcker både claude-code/<version>/claude
+  # och claude-code/<version>/claude.app/Contents/MacOS/claude, och appar i /Applications.
+  local found sorted
+  found="$(for dir in "$app_data" "/Applications/Claude.app" "$HOME/Applications/Claude.app"; do
+    [ -d "$dir" ] && find "$dir" -maxdepth 6 -type f -name claude -perm -u+x 2>/dev/null
+  done)"
+  # Äldre macOS saknar sort -V. Då räcker vanlig sortering.
+  sorted="$(printf '%s\n' "$found" | sort -rV 2>/dev/null)" || sorted="$(printf '%s\n' "$found" | sort -r)"
+  while IFS= read -r c; do
+    [ -n "$c" ] && candidates+=("$c")
+  done <<<"$sorted"
+  for c in "${candidates[@]}"; do
+    [ -f "$c" ] && [ -x "$c" ] || continue
+    "$c" --version </dev/null >/dev/null 2>&1 && { printf '%s\n' "$c"; return 0; }
+  done
+  return 1
+}
+
 if [ -n "$PLUGINS" ]; then
   step "Antrops Claude-plugins"
-  # Claude-appen har ett eget claude-kommando. Finns inget i PATH används appens.
-  CLAUDE="$(command -v claude || true)"
+  CLAUDE="$(find_claude)"
   if [ -z "$CLAUDE" ]; then
-    CLAUDE="$(ls -d "$HOME/Library/Application Support/Claude/claude-code/"*/claude.app/Contents/MacOS/claude 2>/dev/null \
-      | sort -V | tail -1)"
-  fi
-  if [ -z "$CLAUDE" ] || [ ! -x "$CLAUDE" ]; then
     info "Hittade inte Claude. Installera Claude-appen (https://claude.ai/download), öppna den en gång"
-    info "och kör skriptet igen."
+    info "och kör skriptet igen. Vet du var claude finns: CLAUDE_BIN=/sökväg/till/claude före bash."
   else
     "$CLAUDE" plugin marketplace add "$MARKETPLACE" </dev/null >/dev/null 2>&1 \
       || fail "Kunde inte lägga till Antrops marketplace." "Kör skriptet igen, eller be Claude om hjälp."
